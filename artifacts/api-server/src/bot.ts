@@ -1,9 +1,11 @@
 import TelegramBot from "node-telegram-bot-api";
 import { logger } from "./lib/logger";
+import { setupBot } from "./bot/index";
+import { getDefaultSettings } from "./bot/dbHelper";
 
 let bot: TelegramBot | null = null;
 
-export function startBot() {
+export async function startBot() {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
 
   if (!token) {
@@ -17,9 +19,8 @@ export function startBot() {
     logger.error({ err }, "Telegram polling error");
   });
 
-  bot.on("message", (msg) => {
-    logger.info({ chatId: msg.chat.id, text: msg.text }, "Message received");
-  });
+  await getDefaultSettings();
+  setupBot(bot);
 
   logger.info("Telegram bot started successfully");
 }
