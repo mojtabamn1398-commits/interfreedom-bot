@@ -8,14 +8,10 @@ import {
   adminManageKeyboard,
   cancelKeyboard,
 } from "./keyboards";
-import {
-  pe,
-  safeSend,
-  broadcastMessage,
-  formatDate,
-} from "./utils";
+import { pe, safeSend, broadcastMessage, formatDate } from "./utils";
 import {
   getOrCreateUser,
+  getReferrerInfo,
   getUserByTelegramId,
   getUserByUsername,
   getInviteCount,
@@ -47,8 +43,51 @@ import {
   getDefaultSettings,
 } from "./dbHelper";
 
+async function isMemberOfChannel(
+  bot: TelegramBot,
+  channel: string,
+  userId: number
+): Promise<boolean> {
+  try {
+    const member = await bot.getChatMember(channel, userId);
+    return ["member", "administrator", "creator"].includes(member.status);
+  } catch {
+    return true;
+  }
+}
+
+async function checkMandatoryChannel(
+  bot: TelegramBot,
+  chatId: number,
+  userId: number
+): Promise<boolean> {
+  const channel = await getSetting("mandatory_channel");
+  if (!channel) return true;
+  const isMember = await isMemberOfChannel(bot, channel, userId);
+  if (!isMember) {
+    await safeSend(
+      chatId,
+      `⚠️ برای استفاده از ربات باید ابتدا در کانال ما عضو بشی:\n${channel}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "📢 عضویت در کانال",
+                url: `https://t.me/${channel.replace("@", "")}`,
+              },
+            ],
+            [{ text: "✅ عضو شدم، بررسی کن", callback_data: "check_joined" }],
+          ],
+        },
+      }
+    );
+    return false;
+  }
+  return true;
+}
+
 export function setupBot(bot: TelegramBot) {
-  setupCallbackQuery(bot);
   bot.on("message", async (msg) => {
     if (!msg.text || !msg.from) return;
     const chatId = msg.chat.id;
@@ -60,7 +99,6 @@ export function setupBot(bot: TelegramBot) {
     try {
       await ensureSuperAdmin(userId, username);
       const state = getState(userId);
-
 
       if (text === "❌ انصراف") {
         clearState(userId);
@@ -94,7 +132,6 @@ export function setupBot(bot: TelegramBot) {
       }
 
       const adminUser = await isAdmin(userId, username);
-
       if (adminUser) {
         const handled = await handleAdminMessage(bot, text, chatId, userId, username);
         if (handled) return;
@@ -103,7 +140,42 @@ export function setupBot(bot: TelegramBot) {
       await handleUserMessage(bot, text, chatId, userId, username, firstName);
     } catch (err) {
       logger.error({ err, chatId }, "Error handling message");
+      await safeSend(chatId, "❌ خطایی رخ داد. لطفاً دوباره امتحان کن.");
     }
+  });
+
+  bot.on("callback_query", async (query) => {
+    if (!query.data || !query.from || !query.message) return;
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+
+    try {
+      if (query.data === "check_joined") {
+        const channel = await getSetting("mandatory_channel");
+        if (!channel) {
+          await bot.answerCallbackQuery(query.id, { text: "✅ اوکیه!" });
+          return;
+        }
+        const isMember = await isMemberOfChannel(bot, channel, userId);
+        if (isMember) {
+          await bot.answerCallbackQuery(query.id, { text: "✅ عضویت تایید شد!" });
+          await safeSend(chatId, "✅ عضویت تایید شد! حالا می‌تونی از ربات استفاده کنی.", {
+            reply_markup: userMenuKeyboard,
+          });
+        } else {
+          await bot.answerCallbackQuery(query.id, {
+            text: "❌ هنوز عضو نشدی!",
+            show_alert: true,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, "Error handling callback query");
+    }
+  });
+
+  bot.on("polling_error", (err) => {
+    logger.error({ err }, "Telegram polling error");
   });
 }
 
@@ -131,13 +203,49 @@ async function handleStart(
     return;
   }
 
-  await getOrCreateUser(userId, username, firstName, referredBy);
+  const { isNew } = await getOrCreateUser(userId, username, firstName, referredBy);
+
+  if (isNew && referredBy) {
+    const refInfo = await getReferrerInfo(referredBy);
+    if (refInfo) {
+      const rewardAmt = (await getSetting("invite_reward")) ?? "1";
+      const updatedRef = await getUserByTelegramId(referredBy);
+      await safeSend(
+        referredBy,
+        `🎉 یک زیرمجموعه جدید برات ثبت شد.\n` +
+          `🪙 ${rewardAmt} سکه گرفتی.\n` +
+          `👥 تعداد زیرمجموعه موفق: ${refInfo.invites + 1}\n` +
+          `💰 سکه فعلی: ${(updatedRef?.coins ?? 0)}`
+      );
+    }
+  }
+
+  const channel = await getSetting("mandatory_channel");
+  if (channel) {
+    const isMember = await isMemberOfChannel(bot, channel, userId);
+    if (!isMember) {
+      const welcome = (await getSetting("welcome_message")) ?? "سلام! به ربات خوش آمدی 👋";
+      await safeSend(
+        chatId,
+        `${pe("star")} ${welcome}\n\n👤 خوش آمدی ${firstName}!\n\n⚠️ برای استفاده از ربات باید ابتدا عضو کانال بشی:`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📢 عضویت در کانال", url: `https://t.me/${channel.replace("@", "")}` }],
+              [{ text: "✅ عضو شدم، بررسی کن", callback_data: "check_joined" }],
+            ],
+          },
+        }
+      );
+      return;
+    }
+  }
 
   const welcome = (await getSetting("welcome_message")) ?? "سلام! به ربات خوش آمدی 👋";
-  const channel = await getSetting("channel_username");
+  const channelUsername = await getSetting("channel_username");
 
   let welcomeText = `${pe("star")} ${welcome}\n\n👤 خوش آمدی ${firstName}!`;
-  if (channel) welcomeText += `\n\n📢 کانال ما: ${channel}`;
+  if (channelUsername) welcomeText += `\n\n📢 کانال ما: ${channelUsername}`;
 
   await safeSend(chatId, welcomeText, { reply_markup: userMenuKeyboard });
 }
@@ -165,9 +273,7 @@ async function showAdminPanel(bot: TelegramBot, chatId: number) {
     `📦 سرویس‌ها: ${stats.services.toLocaleString("fa-IR")}\n` +
     `${pe("star")} جمع سکه‌ها: ${stats.coins.toLocaleString("fa-IR")}\n\n` +
     `👇 از دکمه‌های پایین یکی رو انتخاب کن`;
-  await safeSend(chatId, text, {
-    reply_markup: adminPanelKeyboard(maintenance),
-  });
+  await safeSend(chatId, text, { reply_markup: adminPanelKeyboard(maintenance) });
 }
 
 async function handleAdminMessage(
@@ -186,8 +292,7 @@ async function handleAdminMessage(
     case "📊 آمار کلی": {
       const stats = await getStats();
       const pool = await getPoolStats();
-      await safeSend(
-        chatId,
+      await safeSend(chatId,
         `📊 <b>آمار کلی</b>\n\n👥 کاربران: ${stats.users}\n📦 سرویس‌های فعال: ${stats.services}\n${pe("star")} جمع سکه‌ها: ${stats.coins}\n\n🗂️ پول سرویس:\n✅ موجود: ${pool.available}\n📦 کل: ${pool.total}`
       );
       return true;
@@ -195,30 +300,23 @@ async function handleAdminMessage(
 
     case "🏆 برترین دعوت‌ها": {
       const top = await getTopInviters(10);
-      if (!top.length) {
-        await safeSend(chatId, "❌ هنوز کسی دعوت نکرده.");
-        return true;
-      }
-      let msg = `🏆 <b>برترین دعوت‌ها</b>\n\n`;
+      if (!top.length) { await safeSend(chatId, "❌ هنوز کسی دعوت نکرده."); return true; }
+      let m = `🏆 <b>برترین دعوت‌ها</b>\n\n`;
       top.forEach((t, i) => {
-        const u = t.user;
-        msg += `${i + 1}. ${u.firstName}${u.username ? ` (@${u.username})` : ""} — ${t.count} نفر\n`;
+        m += `${i + 1}. ${t.user.firstName}${t.user.username ? ` (@${t.user.username})` : ""} — ${t.count} نفر\n`;
       });
-      await safeSend(chatId, msg);
+      await safeSend(chatId, m);
       return true;
     }
 
     case "👥 ۲۰ کاربر آخر": {
       const users = await getRecentUsers(20);
-      if (!users.length) {
-        await safeSend(chatId, "❌ کاربری وجود ندارد.");
-        return true;
-      }
-      let msg = `👥 <b>۲۰ کاربر آخر</b>\n\n`;
+      if (!users.length) { await safeSend(chatId, "❌ کاربری وجود ندارد."); return true; }
+      let m = `👥 <b>۲۰ کاربر آخر</b>\n\n`;
       users.forEach((u, i) => {
-        msg += `${i + 1}. ${u.firstName}${u.username ? ` (@${u.username})` : ""} | آیدی: <code>${u.telegramId}</code>\n`;
+        m += `${i + 1}. ${u.firstName}${u.username ? ` (@${u.username})` : ""} | <code>${u.telegramId}</code>\n`;
       });
-      await safeSend(chatId, msg);
+      await safeSend(chatId, m);
       return true;
     }
 
@@ -259,21 +357,18 @@ async function handleAdminMessage(
 
     case "📋 لیست مسدودها": {
       const blocked = await getBlockedUsers();
-      if (!blocked.length) {
-        await safeSend(chatId, "✅ هیچ کاربر مسدودی وجود ندارد.");
-        return true;
-      }
-      let msg = `📋 <b>لیست مسدودها</b> (${blocked.length} نفر)\n\n`;
+      if (!blocked.length) { await safeSend(chatId, "✅ هیچ کاربر مسدودی وجود ندارد."); return true; }
+      let m = `📋 <b>لیست مسدودها</b> (${blocked.length} نفر)\n\n`;
       blocked.forEach((u, i) => {
-        msg += `${i + 1}. ${u.firstName}${u.username ? ` (@${u.username})` : ""} | <code>${u.telegramId}</code>\n`;
+        m += `${i + 1}. ${u.firstName}${u.username ? ` (@${u.username})` : ""} | <code>${u.telegramId}</code>\n`;
       });
-      await safeSend(chatId, msg);
+      await safeSend(chatId, m);
       return true;
     }
 
     case "📢 پیام همگانی":
       setState(userId, "await_broadcast_message");
-      await safeSend(chatId, "📢 پیام همگانی را بنویس:\n\n<i>HTML پشتیبانی می‌شه (bold، italic و...)</i>", { reply_markup: cancelKeyboard });
+      await safeSend(chatId, "📢 پیام همگانی را بنویس:\n\n<i>HTML پشتیبانی می‌شه</i>", { reply_markup: cancelKeyboard });
       return true;
 
     case "✉️ پیام به یک کاربر":
@@ -297,15 +392,12 @@ async function handleAdminMessage(
 
     case "📋 لیست ادمین‌ها": {
       const admins = await getAdmins();
-      if (!admins.length) {
-        await safeSend(chatId, "❌ هیچ ادمینی وجود ندارد.");
-        return true;
-      }
-      let msg = `🛡️ <b>لیست ادمین‌ها</b>\n\n`;
+      if (!admins.length) { await safeSend(chatId, "❌ هیچ ادمینی وجود ندارد."); return true; }
+      let m = `🛡️ <b>لیست ادمین‌ها</b>\n\n`;
       admins.forEach((a, i) => {
-        msg += `${i + 1}. ${a.username ? `@${a.username}` : `ID: ${a.telegramId}`} — سطح ${a.level === 2 ? "سوپر ادمین" : "ادمین"}\n`;
+        m += `${i + 1}. ${a.username ? `@${a.username}` : `ID: ${a.telegramId}`} — ${a.level === 2 ? "سوپر ادمین" : "ادمین"}\n`;
       });
-      await safeSend(chatId, msg);
+      await safeSend(chatId, m);
       return true;
     }
 
@@ -352,11 +444,9 @@ async function handleAdminMessage(
     case "🔴 حالت تعمیر: روشن 🟢": {
       const current = (await getSetting("maintenance_mode")) === "true";
       await setSetting("maintenance_mode", current ? "false" : "true");
-      await safeSend(
-        chatId,
-        `🔧 حالت تعمیر: ${!current ? "✅ روشن شد" : "❌ خاموش شد"}`,
-        { reply_markup: adminPanelKeyboard(!current) }
-      );
+      await safeSend(chatId, `🔧 حالت تعمیر: ${!current ? "✅ روشن شد" : "❌ خاموش شد"}`, {
+        reply_markup: adminPanelKeyboard(!current),
+      });
       return true;
     }
 
@@ -381,10 +471,13 @@ async function handleStateInput(
   const text = msg.text?.trim() ?? "";
 
   const resolveUser = async (input: string) => {
-    if (/^\d+$/.test(input)) {
-      return getUserByTelegramId(parseInt(input, 10));
-    }
+    if (/^\d+$/.test(input)) return getUserByTelegramId(parseInt(input, 10));
     return getUserByUsername(input);
+  };
+
+  const adminBack = async (msg2: string) => {
+    const maintenance = (await getSetting("maintenance_mode")) === "true";
+    await safeSend(chatId, msg2, { reply_markup: adminPanelKeyboard(maintenance) });
   };
 
   switch (state.action) {
@@ -393,7 +486,8 @@ async function handleStateInput(
       if (!user) { await safeSend(chatId, "❌ کاربر پیدا نشد."); clearState(userId); return; }
       const invites = await getInviteCount(user.telegramId);
       const services = await getUserServices(user.telegramId);
-      const info =
+      clearState(userId);
+      await adminBack(
         `🔍 <b>اطلاعات کاربر</b>\n\n` +
         `👤 نام: ${user.firstName}\n` +
         `📌 یوزرنیم: ${user.username ? `@${user.username}` : "ندارد"}\n` +
@@ -402,10 +496,8 @@ async function handleStateInput(
         `👥 دعوت‌ها: ${invites}\n` +
         `📦 سرویس‌ها: ${services.length}\n` +
         `🚫 وضعیت: ${user.isBlocked ? "مسدود" : "فعال"}\n` +
-        `📅 تاریخ عضویت: ${formatDate(user.joinedAt)}`;
-      clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, info, { reply_markup: adminPanelKeyboard(maintenance) });
+        `📅 عضویت: ${formatDate(user.joinedAt)}`
+      );
       break;
     }
 
@@ -422,8 +514,7 @@ async function handleStateInput(
       if (isNaN(amount) || amount <= 0) { await safeSend(chatId, "❌ عدد معتبر وارد کن."); return; }
       await addCoins(Number(state.data.targetId), amount);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `✅ ${amount} سکه به ${state.data.targetName} اضافه شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`✅ ${amount} سکه به ${state.data.targetName} اضافه شد.`);
       break;
     }
 
@@ -440,8 +531,7 @@ async function handleStateInput(
       if (isNaN(amount) || amount <= 0) { await safeSend(chatId, "❌ عدد معتبر وارد کن."); return; }
       await removeCoins(Number(state.data.targetId), amount);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `✅ ${amount} سکه از ${state.data.targetName} کم شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`✅ ${amount} سکه از ${state.data.targetName} کم شد.`);
       break;
     }
 
@@ -458,18 +548,16 @@ async function handleStateInput(
       if (isNaN(amount) || amount < 0) { await safeSend(chatId, "❌ عدد معتبر وارد کن."); return; }
       await setCoins(Number(state.data.targetId), amount);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `✅ سکه ${state.data.targetName} به ${amount} تنظیم شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`✅ سکه ${state.data.targetName} به ${amount} تنظیم شد.`);
       break;
     }
 
-    case "await_broadcast_coins" as ConversationAction: {
+    case "await_broadcast_coins": {
       const amount = parseInt(text, 10);
       if (isNaN(amount) || amount <= 0) { await safeSend(chatId, "❌ عدد معتبر وارد کن."); return; }
       await addCoinsToAll(amount);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `✅ ${amount} سکه به همه کاربران اضافه شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`✅ ${amount} سکه به همه کاربران اضافه شد.`);
       break;
     }
 
@@ -478,8 +566,7 @@ async function handleStateInput(
       if (!user) { await safeSend(chatId, "❌ کاربر پیدا نشد."); clearState(userId); return; }
       await blockUser(user.telegramId);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `🚫 کاربر ${user.firstName} مسدود شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`🚫 کاربر ${user.firstName} مسدود شد.`);
       break;
     }
 
@@ -488,8 +575,7 @@ async function handleStateInput(
       if (!user) { await safeSend(chatId, "❌ کاربر پیدا نشد."); clearState(userId); return; }
       await unblockUser(user.telegramId);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `✅ مسدودیت ${user.firstName} برداشته شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`✅ مسدودیت ${user.firstName} برداشته شد.`);
       break;
     }
 
@@ -498,8 +584,7 @@ async function handleStateInput(
       if (!user) { await safeSend(chatId, "❌ کاربر پیدا نشد."); clearState(userId); return; }
       await deleteUserServices(user.telegramId);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, `🗑️ سرویس‌های ${user.firstName} حذف شد.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(`🗑️ سرویس‌های ${user.firstName} حذف شد.`);
       break;
     }
 
@@ -509,12 +594,7 @@ async function handleStateInput(
       await safeSend(chatId, `📢 در حال ارسال به ${ids.length} نفر...`);
       const result = await broadcastMessage(bot, ids, text);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(
-        chatId,
-        `✅ ارسال تموم شد!\n\n✔️ موفق: ${result.success}\n❌ خطا: ${result.failed}`,
-        { reply_markup: adminPanelKeyboard(maintenance) }
-      );
+      await adminBack(`✅ ارسال تموم شد!\n\n✔️ موفق: ${result.success}\n❌ خطا: ${result.failed}`);
       break;
     }
 
@@ -529,8 +609,7 @@ async function handleStateInput(
     case "await_dm_message": {
       const sent = await safeSend(Number(state.data.targetId), text);
       clearState(userId);
-      const maintenance = (await getSetting("maintenance_mode")) === "true";
-      await safeSend(chatId, sent ? `✅ پیام به ${state.data.targetName} ارسال شد.` : `❌ ارسال ناموفق بود.`, { reply_markup: adminPanelKeyboard(maintenance) });
+      await adminBack(sent ? `✅ پیام به ${state.data.targetName} ارسال شد.` : `❌ ارسال ناموفق بود.`);
       break;
     }
 
@@ -556,14 +635,13 @@ async function handleStateInput(
       break;
     }
 
-    case "await_set_welcome": {
+    case "await_set_welcome":
       await setSetting("welcome_message", text);
       clearState(userId);
       await safeSend(chatId, "✅ پیام خوش‌آمد ذخیره شد.", { reply_markup: botSettingsKeyboard });
       break;
-    }
 
-    case "await_set_mandatory_channel": {
+    case "await_set_mandatory_channel":
       if (text === "0") {
         await setSetting("mandatory_channel", "");
         clearState(userId);
@@ -572,10 +650,9 @@ async function handleStateInput(
         const ch = text.startsWith("@") ? text : `@${text}`;
         await setSetting("mandatory_channel", ch);
         clearState(userId);
-        await safeSend(chatId, `✅ کانال اجباری تنظیم شد: ${ch}`, { reply_markup: botSettingsKeyboard });
+        await safeSend(chatId, `✅ کانال اجباری: ${ch}`, { reply_markup: botSettingsKeyboard });
       }
       break;
-    }
 
     case "await_set_invite_reward": {
       const n = parseInt(text, 10);
@@ -590,22 +667,24 @@ async function handleStateInput(
       const sup = text.startsWith("@") ? text : `@${text}`;
       await setSetting("support_username", sup);
       clearState(userId);
-      await safeSend(chatId, `✅ پشتیبان تنظیم شد: ${sup}`, { reply_markup: botSettingsKeyboard });
+      await safeSend(chatId, `✅ پشتیبان: ${sup}`, { reply_markup: botSettingsKeyboard });
       break;
     }
 
-    case "await_add_service_name": {
+    case "await_add_service_name":
       setState(userId, "await_add_service_config", { serviceName: text });
       await safeSend(chatId, "➕ کانفیگ یا لینک سرویس را وارد کن:");
       break;
-    }
 
-    case "await_add_service_config": {
+    case "await_add_service_config":
       await addServiceToPool(String(state.data.serviceName), text);
       clearState(userId);
       await safeSend(chatId, `✅ سرویس «${state.data.serviceName}» به پول اضافه شد.`, { reply_markup: botSettingsKeyboard });
       break;
-    }
+
+    case "await_set_channel":
+      clearState(userId);
+      break;
 
     default:
       clearState(userId);
@@ -637,53 +716,24 @@ async function handleUserMessage(
     return;
   }
 
-  const mandatoryChannel = await getSetting("mandatory_channel");
-
-  const checkChannel = async (): Promise<boolean> => {
-    if (!mandatoryChannel) return true;
-    try {
-      const member = await bot.getChatMember(mandatoryChannel, userId);
-      return ["member", "administrator", "creator"].includes(member.status);
-    } catch {
-      return true;
-    }
-  };
+  const channelOk = await checkMandatoryChannel(bot, chatId, userId);
+  if (!channelOk) return;
 
   switch (text) {
     case "🎁 سرویس رایگان": {
-      const isMember = await checkChannel();
-      if (!isMember) {
-        await safeSend(chatId, `⚠️ برای دریافت سرویس رایگان، ابتدا در کانال ما عضو شو:\n${mandatoryChannel}`, {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "📢 عضویت در کانال", url: `https://t.me/${mandatoryChannel?.replace("@", "")}` }],
-              [{ text: "✅ عضو شدم", callback_data: "check_joined" }],
-            ],
-          },
-        });
-        return;
-      }
-
       const existing = await getUserServices(userId);
       if (existing.length > 0) {
-        await safeSend(chatId, `📦 شما قبلاً سرویس دریافت کردید.\nبرای مشاهده: «📦 سرویس‌های من» را بزن.`);
+        await safeSend(chatId, `📦 شما قبلاً سرویس دریافت کردید.\nبرای مشاهده دکمه «📦 سرویس‌های من» را بزن.`);
         return;
       }
-
       const poolItem = await getServiceFromPool();
       if (!poolItem) {
         await safeSend(chatId, "❌ در حال حاضر سرویسی موجود نیست. بعداً مراجعه کنید.");
         return;
       }
-
       const service = await assignServiceToUser(poolItem.id, userId);
-      if (!service) {
-        await safeSend(chatId, "❌ خطا در دریافت سرویس.");
-        return;
-      }
-
-      await safeSend(
-        chatId,
+      if (!service) { await safeSend(chatId, "❌ خطا در دریافت سرویس."); return; }
+      await safeSend(chatId,
         `${pe("star")} <b>سرویس رایگان شما</b>\n\n📦 نام: ${service.name}\n\n<code>${service.config}</code>\n\n✅ این کانفیگ فقط برای شماست.`
       );
       break;
@@ -704,7 +754,7 @@ async function handleUserMessage(
     case "👤 اطلاعات حساب": {
       const invites = await getInviteCount(userId);
       const services = await getUserServices(userId);
-      const info =
+      await safeSend(chatId,
         `👤 <b>اطلاعات حساب</b>\n\n` +
         `${pe("crown")} نام: ${user.firstName}\n` +
         `📌 یوزرنیم: ${user.username ? `@${user.username}` : "ندارد"}\n` +
@@ -712,21 +762,21 @@ async function handleUserMessage(
         `${pe("star")} سکه: ${user.coins}\n` +
         `👥 دعوت‌ها: ${invites}\n` +
         `📦 سرویس‌ها: ${services.length}\n` +
-        `📅 عضویت: ${formatDate(user.joinedAt)}`;
-      await safeSend(chatId, info);
+        `📅 عضویت: ${formatDate(user.joinedAt)}`
+      );
       break;
     }
 
     case "🎉 دعوت دوستان + پاداش": {
       const invites = await getInviteCount(userId);
       const reward = (await getSetting("invite_reward")) ?? "1";
-      const link = `https://t.me/${(await bot.getMe()).username}?start=${userId}`;
-      await safeSend(
-        chatId,
+      const botInfo = await bot.getMe();
+      const link = `https://t.me/${botInfo.username}?start=${userId}`;
+      await safeSend(chatId,
         `${pe("diamond")} <b>دعوت دوستان</b>\n\n` +
-          `🎁 به ازای هر دعوت: ${reward} سکه\n` +
-          `👥 دعوت‌های شما: ${invites} نفر\n\n` +
-          `🔗 لینک دعوت شما:\n<code>${link}</code>`
+        `🎁 به ازای هر دعوت: ${reward} سکه\n` +
+        `👥 دعوت‌های شما: ${invites} نفر\n\n` +
+        `🔗 لینک دعوت شما:\n<code>${link}</code>`
       );
       break;
     }
@@ -734,8 +784,7 @@ async function handleUserMessage(
     case "🛠 پشتیبانی": {
       const support = (await getSetting("support_username")) ?? "@support";
       const channel = (await getSetting("channel_username")) ?? "";
-      await safeSend(
-        chatId,
+      await safeSend(chatId,
         `🛠 <b>پشتیبانی</b>\n\n👤 پشتیبان: ${support}\n${channel ? `📢 کانال: ${channel}` : ""}`
       );
       break;
@@ -744,44 +793,4 @@ async function handleUserMessage(
     default:
       await safeSend(chatId, "لطفاً از دکمه‌های منو استفاده کن.", { reply_markup: userMenuKeyboard });
   }
-}
-
-function setupCallbackQuery(bot: TelegramBot) {
-  bot.on("callback_query", async (query) => {
-    if (!query.data || !query.from || !query.message) return;
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-
-    if (query.data === "check_joined") {
-      const mandatoryChannel = await getSetting("mandatory_channel");
-      if (!mandatoryChannel) {
-        await bot.answerCallbackQuery(query.id, { text: "✅ اوکیه!" });
-        return;
-      }
-      try {
-        const member = await bot.getChatMember(mandatoryChannel, userId);
-        if (["member", "administrator", "creator"].includes(member.status)) {
-          await bot.answerCallbackQuery(query.id, { text: "✅ عضویت تایید شد!" });
-          const existing = await getUserServices(userId);
-          if (existing.length > 0) {
-            await safeSend(chatId, "📦 شما قبلاً سرویس دریافت کردید.");
-            return;
-          }
-          const poolItem = await getServiceFromPool();
-          if (!poolItem) {
-            await safeSend(chatId, "❌ در حال حاضر سرویسی موجود نیست.");
-            return;
-          }
-          const service = await assignServiceToUser(poolItem.id, userId);
-          if (service) {
-            await safeSend(chatId, `${pe("star")} <b>سرویس رایگان شما</b>\n\n📦 ${service.name}\n\n<code>${service.config}</code>`);
-          }
-        } else {
-          await bot.answerCallbackQuery(query.id, { text: "❌ هنوز عضو نشدی!", show_alert: true });
-        }
-      } catch {
-        await bot.answerCallbackQuery(query.id, { text: "خطا در بررسی عضویت" });
-      }
-    }
-  });
 }

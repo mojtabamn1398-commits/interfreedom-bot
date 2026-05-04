@@ -15,7 +15,7 @@ export async function getOrCreateUser(
   username: string | undefined,
   firstName: string,
   referredBy?: number
-) {
+): Promise<{ user: typeof botUsersTable.$inferSelect; isNew: boolean }> {
   const existing = await db
     .select()
     .from(botUsersTable)
@@ -27,7 +27,7 @@ export async function getOrCreateUser(
       .update(botUsersTable)
       .set({ username: username ?? null, firstName })
       .where(eq(botUsersTable.telegramId, telegramId));
-    return existing[0];
+    return { user: existing[0], isNew: false };
   }
 
   let reward = 0;
@@ -51,7 +51,14 @@ export async function getOrCreateUser(
     })
     .returning();
 
-  return user!;
+  return { user: user!, isNew: true };
+}
+
+export async function getReferrerInfo(referrerId: number) {
+  const user = await getUserByTelegramId(referrerId);
+  if (!user) return null;
+  const invites = await getInviteCount(referrerId);
+  return { user, invites };
 }
 
 export async function getUserByTelegramId(telegramId: number) {
@@ -66,9 +73,7 @@ export async function getUserByTelegramId(telegramId: number) {
 export async function getUserByUsername(username: string) {
   const clean = username.replace("@", "").toLowerCase();
   const users = await db.select().from(botUsersTable);
-  return (
-    users.find((u) => u.username?.toLowerCase() === clean) ?? null
-  );
+  return users.find((u) => u.username?.toLowerCase() === clean) ?? null;
 }
 
 export async function getInviteCount(telegramId: number): Promise<number> {
@@ -128,7 +133,10 @@ export async function getBlockedUsers() {
 }
 
 export async function getAllUsers() {
-  return db.select().from(botUsersTable).where(eq(botUsersTable.isBlocked, false));
+  return db
+    .select()
+    .from(botUsersTable)
+    .where(eq(botUsersTable.isBlocked, false));
 }
 
 export async function getRecentUsers(limit = 20) {
@@ -141,7 +149,7 @@ export async function getRecentUsers(limit = 20) {
 
 export async function getTopInviters(limit = 10) {
   const users = await db.select().from(botUsersTable);
-  const counts: Record<number, { user: typeof users[0]; count: number }> = {};
+  const counts: Record<number, { user: typeof botUsersTable.$inferSelect; count: number }> = {};
   for (const u of users) {
     if (u.referredBy) {
       if (!counts[u.referredBy]) {
@@ -338,7 +346,7 @@ export async function getDefaultSettings() {
     welcome_message: "سلام! به ربات خوش آمدی 👋",
     support_username: "@Abslnf",
     channel_username: "@lnterFreedom",
-    mandatory_channel: "",
+    mandatory_channel: "@lnterFreedom",
     invite_reward: "1",
     maintenance_mode: "false",
   };
