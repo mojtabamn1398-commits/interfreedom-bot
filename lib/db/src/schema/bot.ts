@@ -16,6 +16,7 @@ export const botUsersTable = pgTable("bot_users", {
   coins: integer("coins").notNull().default(0),
   isBlocked: boolean("is_blocked").notNull().default(false),
   referredBy: bigint("referred_by", { mode: "number" }),
+  referralRewarded: boolean("referral_rewarded").notNull().default(false),
   joinedAt: timestamp("joined_at").notNull().defaultNow(),
 });
 

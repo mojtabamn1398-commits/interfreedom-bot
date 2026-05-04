@@ -9,37 +9,64 @@ export const userMenuKeyboard: TelegramBot.ReplyKeyboardMarkup = {
   resize_keyboard: true,
 };
 
-export function adminPanelKeyboard(
-  maintenanceMode: boolean
-): TelegramBot.ReplyKeyboardMarkup {
+export function adminPanelKeyboard(maintenanceMode: boolean): TelegramBot.ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [{ text: "🔍 اطلاعات کاربر" }, { text: "📊 آمار کلی" }],
-      [{ text: "🏆 برترین دعوت‌ها" }, { text: "👥 ۲۰ کاربر آخر" }],
-      [{ text: "➕ افزودن سکه" }, { text: "➖ کم کردن سکه" }],
-      [{ text: "🎁 سکه به همه" }, { text: "⚙️ تنظیم سکه کاربر" }],
-      [{ text: "🚫 مسدود کردن" }, { text: "✅ رفع مسدودیت" }],
-      [{ text: "🗑️ حذف سرویس‌های کاربر" }, { text: "📋 لیست مسدودها" }],
-      [{ text: "📢 پیام همگانی" }, { text: "✉️ پیام به یک کاربر" }],
-      [{ text: "🛡️ مدیریت ادمین‌ها" }, { text: "⚙️ تنظیمات ربات" }],
-      [
-        {
-          text: maintenanceMode
-            ? "🔴 حالت تعمیر: روشن 🟢"
-            : "🟢 حالت تعمیر: خاموش 🔴",
-        },
-      ],
+      [{ text: "👥 مدیریت کاربران" }, { text: "💰 مدیریت سکه" }],
+      [{ text: "📦 مدیریت سرویس" }, { text: "📢 پیام‌رسانی" }],
+      [{ text: "⚙️ تنظیمات ربات" }, { text: "🛡️ مدیریت ادمین‌ها" }],
+      [{ text: "📊 آمار کلی" }],
+      [{ text: maintenanceMode ? "🔴 حالت تعمیر: روشن 🟢" : "🟢 حالت تعمیر: خاموش 🔴" }],
       [{ text: "❌ بستن" }],
     ],
     resize_keyboard: true,
   };
 }
 
+export const userManageKeyboard: TelegramBot.ReplyKeyboardMarkup = {
+  keyboard: [
+    [{ text: "🔍 اطلاعات کاربر" }, { text: "👥 ۲۰ کاربر آخر" }],
+    [{ text: "🏆 برترین دعوت‌ها" }, { text: "📋 لیست مسدودها" }],
+    [{ text: "🚫 مسدود کردن" }, { text: "✅ رفع مسدودیت" }],
+    [{ text: "🔙 بازگشت به پنل" }],
+  ],
+  resize_keyboard: true,
+};
+
+export const coinManageKeyboard: TelegramBot.ReplyKeyboardMarkup = {
+  keyboard: [
+    [{ text: "➕ افزودن سکه" }, { text: "➖ کم کردن سکه" }],
+    [{ text: "⚙️ تنظیم سکه کاربر" }, { text: "🎁 سکه به همه" }],
+    [{ text: "💳 موجودی کاربر" }],
+    [{ text: "🔙 بازگشت به پنل" }],
+  ],
+  resize_keyboard: true,
+};
+
+export const serviceManageKeyboard: TelegramBot.ReplyKeyboardMarkup = {
+  keyboard: [
+    [{ text: "🎁 اعطای سرویس دستی" }, { text: "🗑️ حذف سرویس کاربر" }],
+    [{ text: "📋 سرویس‌های کاربر" }, { text: "📊 آمار پول سرویس" }],
+    [{ text: "➕ افزودن سرویس به پول" }, { text: "🔗 تغییر کانفیگ پایه" }],
+    [{ text: "💰 هزینه سرویس" }],
+    [{ text: "🔙 بازگشت به پنل" }],
+  ],
+  resize_keyboard: true,
+};
+
+export const messagingKeyboard: TelegramBot.ReplyKeyboardMarkup = {
+  keyboard: [
+    [{ text: "📢 پیام همگانی" }, { text: "✉️ پیام به یک کاربر" }],
+    [{ text: "🔙 بازگشت به پنل" }],
+  ],
+  resize_keyboard: true,
+};
+
 export const botSettingsKeyboard: TelegramBot.ReplyKeyboardMarkup = {
   keyboard: [
     [{ text: "📝 پیام خوش‌آمد" }, { text: "📢 کانال اجباری" }],
     [{ text: "🎁 پاداش دعوت" }, { text: "💬 اطلاعات پشتیبانی" }],
-    [{ text: "➕ افزودن سرویس به پول" }, { text: "📊 آمار پول سرویس" }],
+    [{ text: "📺 یوزرنیم کانال" }],
     [{ text: "🔙 بازگشت به پنل" }],
   ],
   resize_keyboard: true,

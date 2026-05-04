@@ -30,28 +30,43 @@ export async function getOrCreateUser(
     return { user: existing[0], isNew: false };
   }
 
-  let reward = 0;
-  if (referredBy && referredBy !== telegramId) {
-    const inviteRewardSetting = await getSetting("invite_reward");
-    reward = parseInt(inviteRewardSetting ?? "1", 10);
-    await db
-      .update(botUsersTable)
-      .set({ coins: sql`${botUsersTable.coins} + ${reward}` })
-      .where(eq(botUsersTable.telegramId, referredBy));
-  }
-
   const [user] = await db
     .insert(botUsersTable)
     .values({
       telegramId,
       username: username ?? null,
       firstName,
-      referredBy: referredBy ?? null,
+      referredBy: referredBy && referredBy !== telegramId ? referredBy : null,
       coins: 0,
     })
     .returning();
 
   return { user: user!, isNew: true };
+}
+
+export async function grantReferralReward(telegramId: number): Promise<boolean> {
+  const [user] = await db
+    .select()
+    .from(botUsersTable)
+    .where(eq(botUsersTable.telegramId, telegramId))
+    .limit(1);
+
+  if (!user || !user.referredBy || user.referralRewarded) return false;
+
+  const rewardStr = await getSetting("invite_reward");
+  const reward = parseInt(rewardStr ?? "1", 10);
+
+  await db
+    .update(botUsersTable)
+    .set({ coins: sql`${botUsersTable.coins} + ${reward}` })
+    .where(eq(botUsersTable.telegramId, user.referredBy));
+
+  await db
+    .update(botUsersTable)
+    .set({ referralRewarded: true })
+    .where(eq(botUsersTable.telegramId, telegramId));
+
+  return true;
 }
 
 export async function getReferrerInfo(referrerId: number) {
