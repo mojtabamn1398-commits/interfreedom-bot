@@ -96,6 +96,7 @@ export function setupBot(bot: TelegramBot) {
     const firstName = msg.from.first_name ?? "کاربر";
     const text = msg.text.trim();
 
+    logger.info({ chatId, userId, text }, "MSG_RECEIVED");
     try {
       await ensureSuperAdmin(userId, username);
       const state = getState(userId);

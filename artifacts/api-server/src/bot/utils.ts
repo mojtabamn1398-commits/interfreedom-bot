@@ -7,8 +7,7 @@ export const PREMIUM_EMOJI = {
 };
 
 export function pe(key: keyof typeof PREMIUM_EMOJI): string {
-  const e = PREMIUM_EMOJI[key];
-  return `<tg-emoji emoji-id="${e.id}">${e.fallback}</tg-emoji>`;
+  return PREMIUM_EMOJI[key].fallback;
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -27,8 +26,13 @@ export async function safeSend(
       ...options,
     });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    try {
+      await bot.sendMessage(chatId, text.replace(/<[^>]+>/g, ""), options);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
