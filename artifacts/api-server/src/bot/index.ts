@@ -30,6 +30,7 @@ import {
   deleteUserServices,
   getServiceFromPool,
   assignServiceToUser,
+  createDirectService,
   addServiceToPool,
   getPoolStats,
   isAdmin,
@@ -170,6 +171,17 @@ export function setupBot(bot: TelegramBot) {
             show_alert: true,
           });
         }
+      } else if (query.data === "get_free_coins") {
+        await bot.answerCallbackQuery(query.id);
+        const botInfo = await bot.getMe();
+        const inviteLink = `https://t.me/${botInfo.username}?start=${userId}`;
+        const reward = (await getSetting("invite_reward")) ?? "1";
+        await safeSend(chatId,
+          `💰 <b>دریافت سکه رایگان</b>\n\n` +
+          `برای هر نفری که با لینک اختصاصی تو وارد ربات بشه، ${reward} سکه بهت تعلق می‌گیره!\n\n` +
+          `🔗 لینک دعوت شما:\n<code>${inviteLink}</code>\n\n` +
+          `لینک رو با دوستات به اشتراک بذار تا سکه جمع کنی 👇`
+        );
       }
     } catch (err) {
       logger.error({ err }, "Error handling callback query");
@@ -226,10 +238,9 @@ async function handleStart(
   if (channel) {
     const isMember = await isMemberOfChannel(bot, channel, userId);
     if (!isMember) {
-      const welcome = (await getSetting("welcome_message")) ?? "سلام! به ربات خوش آمدی 👋";
       await safeSend(
         chatId,
-        `${pe("star")} ${welcome}\n\n👤 خوش آمدی ${firstName}!\n\n⚠️ برای استفاده از ربات باید ابتدا عضو کانال بشی:`,
+        `سلام ${firstName} 👋\n\n⚠️ برای استفاده از ربات باید ابتدا عضو کانال ما بشی:`,
         {
           reply_markup: {
             inline_keyboard: [
@@ -243,12 +254,9 @@ async function handleStart(
     }
   }
 
-  const welcome = (await getSetting("welcome_message")) ?? "سلام! به ربات خوش آمدی 👋";
-  const channelUsername = await getSetting("channel_username");
+  const welcome = (await getSetting("welcome_message")) ?? "به ربات خوش اومدی!\nاز منوی پایین یکی از گزینه‌ها رو انتخاب کن.";
 
-  let welcomeText = `${pe("star")} ${welcome}\n\n👤 خوش آمدی ${firstName}!`;
-  if (channelUsername) welcomeText += `\n\n📢 کانال ما: ${channelUsername}`;
-
+  const welcomeText = `سلام ${firstName} 👋\n\n${welcome}`;
   await safeSend(chatId, welcomeText, { reply_markup: userMenuKeyboard });
 }
 
@@ -723,20 +731,47 @@ async function handleUserMessage(
 
   switch (text) {
     case "🎁 سرویس رایگان": {
+      const costStr = (await getSetting("service_cost")) ?? "4";
+      const cost = parseInt(costStr, 10);
+      const freshUser = await getUserByTelegramId(userId);
+      const coins = freshUser?.coins ?? 0;
+
+      if (coins < cost) {
+        await safeSend(chatId,
+          `🎁 برای دریافت سرویس رایگان به ${cost} سکه نیاز داری.\n\n` +
+          `💰 سکه فعلی شما: ${coins}\n` +
+          `❗️ متاسفانه ${cost - coins} سکه دیگه لازم داری.\n\n` +
+          `برای دریافت سکه رایگان روی دکمه پایین بزن 👇`,
+          {
+            reply_markup: {
+              inline_keyboard: [[{ text: "🎁 دریافت سکه رایگان", callback_data: "get_free_coins" }]],
+            },
+          }
+        );
+        return;
+      }
+
       const existing = await getUserServices(userId);
       if (existing.length > 0) {
-        await safeSend(chatId, `📦 شما قبلاً سرویس دریافت کردید.\nبرای مشاهده دکمه «📦 سرویس‌های من» را بزن.`);
+        await safeSend(chatId,
+          `📦 شما قبلاً سرویس دریافت کردید.\nبرای مشاهده دکمه «📦 سرویس‌های من» را بزن.`
+        );
         return;
       }
-      const poolItem = await getServiceFromPool();
-      if (!poolItem) {
-        await safeSend(chatId, "❌ در حال حاضر سرویسی موجود نیست. بعداً مراجعه کنید.");
-        return;
-      }
-      const service = await assignServiceToUser(poolItem.id, userId);
-      if (!service) { await safeSend(chatId, "❌ خطا در دریافت سرویس."); return; }
+
+      const baseConfig = (await getSetting("base_vless_config")) ??
+        "vless://80dafdc7-38fa-4cf6-8b05-83e52c97d876@185.143.234.235:80?security=&encryption=none&host=vixon.portab.org&type=ws";
+      const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+      const userConfig = `${baseConfig}#IF-${userId}-${suffix}`;
+
+      await removeCoins(userId, cost);
+      await createDirectService(userId, "InterFreedom VPN", userConfig);
+
       await safeSend(chatId,
-        `${pe("star")} <b>سرویس رایگان شما</b>\n\n📦 نام: ${service.name}\n\n<code>${service.config}</code>\n\n✅ این کانفیگ فقط برای شماست.`
+        `✅ <b>سرویس شما آماده‌ست!</b>\n\n` +
+        `📦 نام: InterFreedom VPN\n\n` +
+        `<code>${userConfig}</code>\n\n` +
+        `💰 ${cost} سکه از حسابت کم شد.`
       );
       break;
     }
@@ -756,15 +791,14 @@ async function handleUserMessage(
     case "👤 اطلاعات حساب": {
       const invites = await getInviteCount(userId);
       const services = await getUserServices(userId);
+      const freshUser2 = await getUserByTelegramId(userId);
       await safeSend(chatId,
-        `👤 <b>اطلاعات حساب</b>\n\n` +
-        `${pe("crown")} نام: ${user.firstName}\n` +
-        `📌 یوزرنیم: ${user.username ? `@${user.username}` : "ندارد"}\n` +
-        `🆔 آیدی: <code>${user.telegramId}</code>\n` +
-        `${pe("star")} سکه: ${user.coins}\n` +
-        `👥 دعوت‌ها: ${invites}\n` +
-        `📦 سرویس‌ها: ${services.length}\n` +
-        `📅 عضویت: ${formatDate(user.joinedAt)}`
+        `👤 <b>اطلاعات حساب شما</b>\n\n` +
+        `🆔 آیدی عددی: <code>${userId}</code>\n` +
+        `👤 نام: ${user.firstName}\n` +
+        `💰 موجودی سکه: ${freshUser2?.coins ?? user.coins}\n` +
+        `👥 زیرمجموعه‌های موفق: ${invites}\n` +
+        `📦 تعداد سرویس‌ها: ${services.length}`
       );
       break;
     }

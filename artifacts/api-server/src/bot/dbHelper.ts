@@ -235,6 +235,14 @@ export async function assignServiceToUser(poolId: number, telegramId: number) {
   return service ?? null;
 }
 
+export async function createDirectService(telegramId: number, name: string, config: string) {
+  const [service] = await db
+    .insert(botServicesTable)
+    .values({ userTelegramId: telegramId, name, config })
+    .returning();
+  return service!;
+}
+
 export async function addServiceToPool(name: string, config: string) {
   const [item] = await db
     .insert(botServicePoolTable)
@@ -343,12 +351,14 @@ export async function setSetting(key: string, value: string) {
 
 export async function getDefaultSettings() {
   const defaults: Record<string, string> = {
-    welcome_message: "سلام! به ربات خوش آمدی 👋",
+    welcome_message: "به ربات خوش اومدی!\nاز منوی پایین یکی از گزینه‌ها رو انتخاب کن.",
     support_username: "@Abslnf",
     channel_username: "@lnterFreedom",
     mandatory_channel: "@lnterFreedom",
     invite_reward: "1",
     maintenance_mode: "false",
+    service_cost: "4",
+    base_vless_config: "vless://80dafdc7-38fa-4cf6-8b05-83e52c97d876@185.143.234.235:80?security=&encryption=none&host=vixon.portab.org&type=ws",
   };
   for (const [key, value] of Object.entries(defaults)) {
     const existing = await getSetting(key);
