@@ -8,7 +8,7 @@ import {
   adminManageKeyboard,
   cancelKeyboard,
 } from "./keyboards";
-import { pe, safeSend, broadcastMessage, formatDate } from "./utils";
+import { pe, safeSend, setBotInstance, broadcastMessage, formatDate } from "./utils";
 import {
   getOrCreateUser,
   getReferrerInfo,
@@ -88,6 +88,7 @@ async function checkMandatoryChannel(
 }
 
 export function setupBot(bot: TelegramBot) {
+  setBotInstance(bot);
   bot.on("message", async (msg) => {
     if (!msg.text || !msg.from) return;
     const chatId = msg.chat.id;

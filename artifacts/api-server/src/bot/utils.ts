@@ -1,4 +1,5 @@
 import TelegramBot from "node-telegram-bot-api";
+import { logger } from "../lib/logger";
 
 export const PREMIUM_EMOJI = {
   star: { id: "5458797798495377338", fallback: "⭐" },
@@ -14,23 +15,34 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let _bot: TelegramBot | null = null;
+
+export function setBotInstance(bot: TelegramBot) {
+  _bot = bot;
+}
+
 export async function safeSend(
-  bot: TelegramBot,
   chatId: number,
   text: string,
   options?: TelegramBot.SendMessageOptions
 ): Promise<boolean> {
+  if (!_bot) {
+    logger.error("safeSend: _bot not initialized");
+    return false;
+  }
   try {
-    await bot.sendMessage(chatId, text, {
+    await _bot.sendMessage(chatId, text, {
       parse_mode: "HTML",
       ...options,
     });
     return true;
   } catch (err) {
+    logger.warn({ err, chatId }, "safeSend HTML failed, retrying plain");
     try {
-      await bot.sendMessage(chatId, text.replace(/<[^>]+>/g, ""), options);
+      await _bot.sendMessage(chatId, text.replace(/<[^>]+>/g, ""), options);
       return true;
-    } catch {
+    } catch (err2) {
+      logger.error({ err: err2, chatId }, "safeSend failed completely");
       return false;
     }
   }
@@ -54,18 +66,13 @@ export async function broadcastMessage(
       success++;
     } catch (err: unknown) {
       const telegramErr = err as {
-        code?: string;
         response?: { body?: { error_code?: number; parameters?: { retry_after?: number } } };
       };
       if (telegramErr?.response?.body?.error_code === 429) {
-        const retryAfter =
-          telegramErr.response?.body?.parameters?.retry_after ?? 5;
+        const retryAfter = telegramErr.response?.body?.parameters?.retry_after ?? 5;
         await sleep(retryAfter * 1000);
         try {
-          await bot.sendMessage(userId, text, {
-            parse_mode: "HTML",
-            ...options,
-          });
+          await bot.sendMessage(userId, text, { parse_mode: "HTML", ...options });
           success++;
           await sleep(50);
           continue;
