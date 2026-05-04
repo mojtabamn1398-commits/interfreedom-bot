@@ -602,7 +602,7 @@ async function handleStateInput(
       const allUsers = await getAllUsers();
       const ids = allUsers.map((u) => u.telegramId);
       await safeSend(chatId, `📢 در حال ارسال به ${ids.length} نفر...`);
-      const result = await broadcastMessage(bot, ids, text);
+      const result = await broadcastMessage(bot, ids, text, msg.entities);
       clearState(userId);
       await adminBack(`✅ ارسال تموم شد!\n\n✔️ موفق: ${result.success}\n❌ خطا: ${result.failed}`);
       break;
@@ -617,7 +617,14 @@ async function handleStateInput(
     }
 
     case "await_dm_message": {
-      const sent = await safeSend(Number(state.data.targetId), text);
+      const dmOpts: TelegramBot.SendMessageOptions = msg.entities && msg.entities.length > 0
+        ? { entities: msg.entities }
+        : { parse_mode: "HTML" };
+      let sent = false;
+      try {
+        await bot.sendMessage(Number(state.data.targetId), text, dmOpts);
+        sent = true;
+      } catch { sent = false; }
       clearState(userId);
       await adminBack(sent ? `✅ پیام به ${state.data.targetName} ارسال شد.` : `❌ ارسال ناموفق بود.`);
       break;

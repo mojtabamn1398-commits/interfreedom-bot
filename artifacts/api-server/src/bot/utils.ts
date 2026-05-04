@@ -52,17 +52,19 @@ export async function broadcastMessage(
   bot: TelegramBot,
   userIds: number[],
   text: string,
+  entities?: TelegramBot.MessageEntity[],
   options?: TelegramBot.SendMessageOptions
 ): Promise<{ success: number; failed: number }> {
   let success = 0;
   let failed = 0;
 
+  const sendOpts: TelegramBot.SendMessageOptions = entities && entities.length > 0
+    ? { entities, ...options }
+    : { parse_mode: "HTML", ...options };
+
   for (const userId of userIds) {
     try {
-      await bot.sendMessage(userId, text, {
-        parse_mode: "HTML",
-        ...options,
-      });
+      await bot.sendMessage(userId, text, sendOpts);
       success++;
     } catch (err: unknown) {
       const telegramErr = err as {
@@ -72,7 +74,7 @@ export async function broadcastMessage(
         const retryAfter = telegramErr.response?.body?.parameters?.retry_after ?? 5;
         await sleep(retryAfter * 1000);
         try {
-          await bot.sendMessage(userId, text, { parse_mode: "HTML", ...options });
+          await bot.sendMessage(userId, text, sendOpts);
           success++;
           await sleep(50);
           continue;
